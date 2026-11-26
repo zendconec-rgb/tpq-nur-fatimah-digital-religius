@@ -29,28 +29,18 @@ const configs={
 };
 function showLogin(message=''){ $('#login').hidden=false;$('#app').hidden=true;$('#loginError').textContent=message}
 async function checkProfile(user){
-  const controller=new AbortController();
-  let timeoutId;
-  try{
-    const request=supabase.from('profiles')
-      .select('id,full_name,role,active')
-      .eq('id',user.id)
-      .maybeSingle()
-      .abortSignal(controller.signal);
-    const timeout=new Promise((_,reject)=>{
-      timeoutId=setTimeout(()=>{
-        controller.abort();
-        reject(new Error('Permintaan profil melebihi 12 detik. Uji RLS di SQL Editor berhasil; kemungkinan ada kendala pada permintaan REST dari browser. Periksa koneksi browser dan endpoint Supabase.'));
-      },12000);
-    });
-    const {data,error}=await Promise.race([request,timeout]);
-    if(error)throw new Error('Supabase gagal membaca profil: '+error.message);
-    if(!data)throw new Error('Profil tidak ditemukan untuk akun yang baru login.');
-    if(!data.active||data.role!=='admin')throw new Error('Profil ditemukan tetapi akun tidak aktif atau bukan administrator.');
-    profile=data;
-  }finally{
-    if(timeoutId)clearTimeout(timeoutId);
+  // Gunakan app_metadata yang dikelola Supabase Auth.
+  // Role di app_metadata tidak dapat diubah oleh pengguna melalui user_metadata.
+  const metadata=user.app_metadata||{};
+  if(metadata.role!=='admin'||metadata.active!==true){
+    throw new Error('Akun berhasil login, tetapi role administrator belum tercatat pada Supabase Auth. Jalankan SQL pengaturan app_metadata yang diberikan.');
   }
+  profile={
+    id:user.id,
+    full_name:metadata.full_name||user.email||'Administrator',
+    role:metadata.role,
+    active:metadata.active
+  };
 }
 async function enter(user){await checkProfile(user);$('#login').hidden=true;$('#app').hidden=false;$('#userLabel').textContent=profile.full_name+' · Administrator';await render()}
 async function load(t){const {data,error}=await supabase.from(configs[t].table).select('*').order(t==='classes'?'name':'created_at',{ascending:true});if(error)throw error;rows[t]=data||[]}
