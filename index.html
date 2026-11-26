@@ -20,14 +20,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const SUPABASE_URL='https://jpnuwmxwnablsqxnmyym.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY='sb_publishable_Cc3C2Wgg10JuDi7iOBDl_w_eGXznH-u';
-const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{
-  global:{fetch:(url,options={})=>{
-    const controller=new AbortController();
-    const timer=setTimeout(()=>controller.abort(),15000);
-    return fetch(url,{...options,signal:controller.signal})
-      .finally(()=>clearTimeout(timer));
-  }}
-});
+const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
 const $=s=>document.querySelector(s);let page='dashboard',editing=null,rows={students:[],teachers:[],classes:[]},profile=null;
 const configs={
  students:{title:'Data Santri',table:'students',fields:[['student_code','Nomor induk','text',true],['full_name','Nama lengkap','text',true],['gender','Jenis kelamin','select',false],['address','Alamat','text',false],['status','Status','select',false]],columns:['student_code','full_name','gender','address','status']},
@@ -36,19 +29,28 @@ const configs={
 };
 function showLogin(message=''){ $('#login').hidden=false;$('#app').hidden=true;$('#loginError').textContent=message}
 async function checkProfile(user){
-  const request=supabase.from('profiles')
-    .select('id,full_name,role,active')
-    .eq('id',user.id)
-    .maybeSingle();
-  const timeout=new Promise((_,reject)=>setTimeout(
-    ()=>reject(new Error('Pemeriksaan profil melebihi 12 detik. Autentikasi berhasil, tetapi akses baca tabel profiles belum merespons. Periksa GRANT SELECT dan kebijakan RLS tabel profiles di Supabase SQL Editor.')),
-    12000
-  ));
-  const {data,error}=await Promise.race([request,timeout]);
-  if(error)throw new Error('Gagal membaca profil administrator: '+error.message);
-  if(!data)throw new Error('Akun berhasil login, tetapi baris profil tidak ditemukan untuk User ID '+user.id+'. Periksa public.profiles.');
-  if(!data.active||data.role!=='admin')throw new Error('Profil ditemukan, tetapi role bukan admin atau status akun tidak aktif.');
-  profile=data;
+  const controller=new AbortController();
+  let timeoutId;
+  try{
+    const request=supabase.from('profiles')
+      .select('id,full_name,role,active')
+      .eq('id',user.id)
+      .maybeSingle()
+      .abortSignal(controller.signal);
+    const timeout=new Promise((_,reject)=>{
+      timeoutId=setTimeout(()=>{
+        controller.abort();
+        reject(new Error('Permintaan profil melebihi 12 detik. Uji RLS di SQL Editor berhasil; kemungkinan ada kendala pada permintaan REST dari browser. Periksa koneksi browser dan endpoint Supabase.'));
+      },12000);
+    });
+    const {data,error}=await Promise.race([request,timeout]);
+    if(error)throw new Error('Supabase gagal membaca profil: '+error.message);
+    if(!data)throw new Error('Profil tidak ditemukan untuk akun yang baru login.');
+    if(!data.active||data.role!=='admin')throw new Error('Profil ditemukan tetapi akun tidak aktif atau bukan administrator.');
+    profile=data;
+  }finally{
+    if(timeoutId)clearTimeout(timeoutId);
+  }
 }
 async function enter(user){await checkProfile(user);$('#login').hidden=true;$('#app').hidden=false;$('#userLabel').textContent=profile.full_name+' · Administrator';await render()}
 async function load(t){const {data,error}=await supabase.from(configs[t].table).select('*').order(t==='classes'?'name':'created_at',{ascending:true});if(error)throw error;rows[t]=data||[]}
