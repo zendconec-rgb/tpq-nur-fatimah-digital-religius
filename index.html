@@ -35,7 +35,21 @@ const configs={
  classes:{title:'Data Kelas',table:'classes',fields:[['name','Nama kelas','text',true],['level','Tingkat / jilid','text',false],['notes','Catatan','text',false]],columns:['name','level','notes']}
 };
 function showLogin(message=''){ $('#login').hidden=false;$('#app').hidden=true;$('#loginError').textContent=message}
-async function checkProfile(user){const {data,error}=await supabase.from('profiles').select('id,full_name,role,active').eq('id',user.id).single();if(error)throw error;if(!data.active||data.role!=='admin')throw new Error('Akun belum memiliki hak administrator aktif.');profile=data}
+async function checkProfile(user){
+  const request=supabase.from('profiles')
+    .select('id,full_name,role,active')
+    .eq('id',user.id)
+    .maybeSingle();
+  const timeout=new Promise((_,reject)=>setTimeout(
+    ()=>reject(new Error('Pemeriksaan profil melebihi 12 detik. Autentikasi berhasil, tetapi akses baca tabel profiles belum merespons. Periksa GRANT SELECT dan kebijakan RLS tabel profiles di Supabase SQL Editor.')),
+    12000
+  ));
+  const {data,error}=await Promise.race([request,timeout]);
+  if(error)throw new Error('Gagal membaca profil administrator: '+error.message);
+  if(!data)throw new Error('Akun berhasil login, tetapi baris profil tidak ditemukan untuk User ID '+user.id+'. Periksa public.profiles.');
+  if(!data.active||data.role!=='admin')throw new Error('Profil ditemukan, tetapi role bukan admin atau status akun tidak aktif.');
+  profile=data;
+}
 async function enter(user){await checkProfile(user);$('#login').hidden=true;$('#app').hidden=false;$('#userLabel').textContent=profile.full_name+' · Administrator';await render()}
 async function load(t){const {data,error}=await supabase.from(configs[t].table).select('*').order(t==='classes'?'name':'created_at',{ascending:true});if(error)throw error;rows[t]=data||[]}
 function escapeHtml(v){return String(v??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
