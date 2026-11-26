@@ -20,7 +20,14 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const SUPABASE_URL='https://jpnuwmxwnablsqxnmyym.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY='sb_publishable_Cc3C2Wgg10JuDi7iOBDl_w_eGXznH-u';
-const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
+const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{
+  global:{fetch:(url,options={})=>{
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),15000);
+    return fetch(url,{...options,signal:controller.signal})
+      .finally(()=>clearTimeout(timer));
+  }}
+});
 const $=s=>document.querySelector(s);let page='dashboard',editing=null,rows={students:[],teachers:[],classes:[]},profile=null;
 const configs={
  students:{title:'Data Santri',table:'students',fields:[['student_code','Nomor induk','text',true],['full_name','Nama lengkap','text',true],['gender','Jenis kelamin','select',false],['address','Alamat','text',false],['status','Status','select',false]],columns:['student_code','full_name','gender','address','status']},
@@ -37,7 +44,26 @@ function tableHtml(t){const c=configs[t],list=rows[t];return '<div class="row"><
 async function render(){try{if(page==='dashboard'){await Promise.all(['students','teachers','classes'].map(load));$('#view').innerHTML=dashboard();$('#crumb').textContent='Dashboard'}else{await load(page);$('#view').innerHTML=tableHtml(page);$('#crumb').textContent=configs[page].title}}catch(e){$('#view').innerHTML='<div class="notice">Gagal memuat data: '+escapeHtml(e.message)+'</div>'}}
 function openForm(id){editing=id||null;const c=configs[page],r=id?rows[page].find(x=>x.id===id):{};$('#formtitle').textContent=(id?'Ubah ':'Tambah ')+c.title;$('#fields').innerHTML=c.fields.map(([k,label,type,required])=>{let options=k==='gender'?['L','P']:k==='status'?['aktif','nonaktif','lulus','pindah']:[];let control=type==='select'?'<select name="'+k+'"><option value="">Pilih</option>'+options.map(o=>'<option value="'+o+'" '+(r[k]===o?'selected':'')+'>'+o+'</option>').join('')+'</select>':'<input name="'+k+'" type="'+type+'" value="'+escapeHtml(r[k]||'').replace(/"/g,'&quot;')+'" '+(required?'required':'')+'>';return '<label>'+label+control+'</label>'}).join('');$('#modal').classList.add('show')}
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.page){page=b.dataset.page;document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===b));await render()}if(b.id==='add')openForm();if(b.dataset.edit)openForm(b.dataset.edit);if(b.dataset.delete){if(confirm('Hapus data ini secara permanen?')){const {error}=await supabase.from(configs[page].table).delete().eq('id',b.dataset.delete);if(error)alert(error.message);await render()}}});
-$('#loginForm').addEventListener('submit',async e=>{e.preventDefault();$('#loginBtn').disabled=true;$('#loginError').textContent='Memeriksa akun...';const {data,error}=await supabase.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value});$('#loginBtn').disabled=false;if(error){$('#loginError').textContent=error.message;return}try{await enter(data.user)}catch(err){await supabase.auth.signOut();showLogin(err.message)}});
+$('#loginForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const btn=$('#loginBtn'),msg=$('#loginError');
+  btn.disabled=true;msg.textContent='Menghubungi server autentikasi...';
+  try{
+    const {data,error}=await supabase.auth.signInWithPassword({
+      email:$('#email').value.trim(),password:$('#password').value
+    });
+    if(error) throw error;
+    msg.textContent='Login berhasil. Memeriksa hak akses administrator...';
+    await enter(data.user);
+  }catch(err){
+    const timed=err?.name==='AbortError'||/abort/i.test(err?.message||'');
+    msg.textContent=timed
+      ?'Koneksi ke Supabase melewati batas 15 detik. Periksa internet dan konfigurasi URL/API key, lalu coba lagi.'
+      :(err?.message||'Login gagal. Periksa koneksi dan konfigurasi Supabase.');
+    console.error('TPQ login diagnostic:',err);
+    try{await supabase.auth.signOut()}catch(_){}
+  }finally{btn.disabled=false}
+});
 $('#logout').onclick=async()=>{await supabase.auth.signOut();profile=null;showLogin()};
 $('#cancel').onclick=()=>$('#modal').classList.remove('show');
 $('#form').onsubmit=async e=>{e.preventDefault();const payload=Object.fromEntries(new FormData(e.currentTarget));Object.keys(payload).forEach(k=>{if(payload[k]==='')payload[k]=null});let q=editing?supabase.from(configs[page].table).update(payload).eq('id',editing):supabase.from(configs[page].table).insert(payload);const {error}=await q;if(error){alert('Gagal menyimpan: '+error.message);return}$('#modal').classList.remove('show');await render()};
